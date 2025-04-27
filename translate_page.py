@@ -89,12 +89,22 @@ def translate_manga(image):
     new_bboxes = merge_bounding_boxes(bboxes, draw_intermediate)
 
     # in the new bounding boxes, take a screenshot, use ocr and replace the text 
+    translations = []
     for bbox in new_bboxes:
         cropped = img_processed.crop(bbox)
         text = mocr(cropped)
         print(text)
         translated = GoogleTranslator(source='ja', target='en').translate(text)
         print(translated)
+        translations.append(translated)
+
+    b = 2 # buffer
+    for (x1, y1, x2, y2) in bboxes:
+        draw.rectangle([x1-b, y1-b, x2+b, y2+b], fill="white")
+
+    for i in range(len(new_bboxes)):
+        bbox = new_bboxes[i]
+        translated = translations[i]
         draw_multiline_inside_box(draw, bbox, translated)
 
     return img, img_copy
@@ -180,7 +190,6 @@ def convert_to_minmax_box(bbox):
 def draw_multiline_inside_box(draw, bbox, text):
     if not draw or not bbox or not text:
         return
-    b = 2 # buffer
     shadow_offset = 2
     font_size = 20
     font = ImageFont.truetype("arial.ttf", font_size)
@@ -202,18 +211,15 @@ def draw_multiline_inside_box(draw, bbox, text):
     # to split the text, we add up the words until they break the width limit
     # then we add a new line \n after the next word and space
     current_string = ''
-    max_width = x2-x1
     for word in words:
         current_width = draw.textlength(current_string, font=font)
         proposed_width = draw.textlength(current_string + f'{word} ', font=font)
         if proposed_width >= x2-x1:
             lined_text += current_string + '\n'
-            max_width = np.max([max_width, current_width]) 
             current_string = ''
         current_string += f'{word} '
     lined_text += current_string
             
-    draw.rectangle([x1-b, y1-b, x1+(max_width)+b, y2+b], fill="white")
     draw.multiline_text((x1 + shadow_offset, y1 + shadow_offset), lined_text, font=font, fill="white")
     draw.multiline_text((x1,y1), lined_text, font=font, fill="black")
 
