@@ -28,7 +28,7 @@ def new_filename():
     return f'image_{utc_now.strftime("%Y%m%d_%H%M%S")}.png'
 
 def calculate_progress(count, total):
-    return f'{100*count/total}%, {count} out of {total}'
+    return f'{int(100*count/total)}%, {count} out of {total}'
 
 def translate_pages(image_list):
     intermediate = []
