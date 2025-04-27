@@ -190,6 +190,7 @@ def convert_to_minmax_box(bbox):
 def draw_multiline_inside_box(draw, bbox, text):
     if not draw or not bbox or not text:
         return
+    b = 2 # buffer
     shadow_offset = 2
     font_size = 20
     font = ImageFont.truetype("arial.ttf", font_size)
@@ -197,7 +198,7 @@ def draw_multiline_inside_box(draw, bbox, text):
     # we want to preserve the width and let the height run
     # if the estimated height is too large we'll scale the font down
     char_width = draw.textlength('A', font=font)
-    approx_text_volume = char_width * font_size* len(text)
+    approx_text_volume = char_width * font_size * len(text)
     (x1, y1, x2, y2) = bbox
     approx_box_volume = (x2-x1) * (y2-y1)
     if approx_text_volume > approx_box_volume:
@@ -211,15 +212,19 @@ def draw_multiline_inside_box(draw, bbox, text):
     # to split the text, we add up the words until they break the width limit
     # then we add a new line \n after the next word and space
     current_string = ''
+    line_count = 1
     for word in words:
-        current_width = draw.textlength(current_string, font=font)
         proposed_width = draw.textlength(current_string + f'{word} ', font=font)
         if proposed_width >= x2-x1:
             lined_text += current_string + '\n'
             current_string = ''
+            line_count += 1
         current_string += f'{word} '
     lined_text += current_string
-            
+
+    text_width = draw.textlength(lined_text, font=font)
+    
+    draw.rectangle([x1-b, y1-b, x1+text_width+b, y2+(line_count*font_size)+b], fill="white")
     draw.multiline_text((x1 + shadow_offset, y1 + shadow_offset), lined_text, font=font, fill="white")
     draw.multiline_text((x1,y1), lined_text, font=font, fill="black")
 
