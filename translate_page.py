@@ -28,7 +28,7 @@ def new_filename():
     return f'image_{utc_now.strftime("%Y%m%d_%H%M%S")}.png'
 
 def calculate_progress(count, total):
-    return f'{int(count/total)*100}%, {count} out of {total}'
+    return f'{100*count/total}%, {count} out of {total}'
 
 def translate_pages(image_list):
     intermediate = []
@@ -123,7 +123,7 @@ def merge_bounding_boxes(bboxes, draw = None):
             radius = diagonals[i]
         else:
             radius = 2*shortest_side[i]
-            
+
         bbox_near_indices = bbox_tree.query_ball_point(center, radius)
         for b in bbox_near_indices:
             if b == i:
