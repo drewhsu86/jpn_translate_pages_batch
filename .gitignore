@@ -1,0 +1,10 @@
+# Virtual environments
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# folders
+output_images/

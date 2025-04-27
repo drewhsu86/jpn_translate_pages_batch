@@ -3,12 +3,13 @@ import io
 import datetime
 import gradio as gr
 import easyocr
+# fix fugashi for manga_ocr: https://github.com/pypa/pip/issues/10605 (mecab dll)
 from manga_ocr import MangaOcr
 from deep_translator import GoogleTranslator
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 import numpy as np
 import cv2
-import pytesseract
+from scipy.spatial import KDTree
 
 # works with input gr.Image (one at a time)
 # doesn't work with file/files (multiple)
@@ -54,8 +55,8 @@ def translate_manga(image):
         maxValue=255, 
         adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
         thresholdType=cv2.THRESH_BINARY_INV,  # Invert for black text on white
-        blockSize=15, 
-        C=5
+        blockSize=21, 
+        C=7
     )
 
     img_processed = Image.fromarray(img_thresh)
@@ -69,51 +70,59 @@ def translate_manga(image):
         min_x, min_y = int(min(xs)), int(min(ys))
         max_x, max_y = int(max(xs)), int(max(ys))
 
-        # Crop from original image
-        cropped = img_processed.crop((min_x, min_y, max_x, max_y))
-
-        # Resize (upscale) the cropped region
-        upscale_factor = 10
-        cropped = cropped.resize(
-            (cropped.width * upscale_factor, cropped.height * upscale_factor),
-            resample=Image.LANCZOS
-        )
-
-        # Convert to grayscale and binarize (thresholding)
-        gray = cropped.convert("L")
-        bw = gray.point(lambda x: 0 if x < 180 else 255, "1")
-        bw_gray = bw.convert("L")  # Convert to grayscale (L mode)
-
-        # Run OCR on the preprocessed crop
-        # new_text = reader.readtext(np.array(bw_gray), detail=0, paragraph=True, decoder='greedy')
-        custom_config = r'--oem 3 --psm 6'
-        new_text = pytesseract.image_to_string(bw_gray, lang="jpn-vert", config=custom_config)
-        # manga_ocr = MangaOcr()
-        # new_text = manga_ocr(bw_gray)
-
-        # Draw the upright bounding box on the original image
         draw.rectangle([min_x, min_y, max_x, max_y], outline="red", width=2)
 
-        # Label the box with recognized text
-        if new_text:
-            print(f'New Text: {new_text}')
-            # phrase = ''.join(new_text) # easyocr returns list
-            phrase = new_text
-            translated = GoogleTranslator(source='ja', target='en').translate(phrase)
-            if not translated:
-                continue
-            word_list = translated.split(' ')
-            increment = 24
-            shadow_incr = 2
-            font = ImageFont.truetype("arial.ttf", increment)
-            start = 0
-            for word in word_list:
-                draw.text((min_x - shadow_incr, min_y - increment + start - shadow_incr), word, fill="white", font=font)
-                draw.text((min_x + shadow_incr, min_y - increment + start + shadow_incr), word, fill="white", font=font)
-                draw.text((min_x, min_y - increment + start), word, fill="blue", font=font)
-                start += increment
+    bboxes = [result[0] for result in results]
+
+    new_bboxes = merge_bounding_boxes(bboxes, draw)
 
     return img
+
+def merge_bounding_boxes(bboxes, draw = None):
+    # use KDtree to store center points
+    bboxes = [convert_to_minmax_box(bbox) for bbox in bboxes]
+
+    centers = [(xmin + (xmax - xmin)/2, ymin + (ymax - ymin)/2) for (xmin, ymin, xmax, ymax) in bboxes]
+    # diagonals = [np.linalg.norm(np.array([xmax, ymax]) - np.array([xmin,ymin])) for (xmin, ymin, xmax, ymax) in bboxes]
+    shortest_side = [np.min([xmax - xmin,ymax - ymin]) for (xmin, ymin, xmax, ymax) in bboxes] 
+
+    bbox_tree = KDTree(centers)
+    # we will iterate through each bounding box and group them together
+    # we will store the group numbers of each bounding box index first
+    # then form the new bounding boxes from those groups later
+    bbox_groups = list(range(len(bboxes))) # the value will be the group, index will be identifying bbox
+
+    for i in range(len(bboxes)):
+        center = centers[i]
+        # radius = diagonals[i]
+        radius = 2*shortest_side[i]
+        bbox_near_indices = bbox_tree.query_ball_point(center, radius)
+        for b in bbox_near_indices:
+            if b == i:
+                continue
+            bbox_groups[b] = bbox_groups[i]
+        (xmin, ymin, xmax, ymax) = bboxes[i]
+    
+    if draw != None:
+        font = ImageFont.truetype("arial.ttf", 20)
+        for i in range(len(bbox_groups)):
+            print(f'Bbox {i} in group {bbox_groups[i]}')
+            draw.text(np.array(centers[i]) + np.array((2,2)), f'{bbox_groups[i]}', fill="white", font=font)
+            draw.text(centers[i], f'{bbox_groups[i]}', fill="blue", font=font)
+    
+    return bboxes
+
+def convert_to_minmax_box(bbox):
+    # bbox is expected to be in the format [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+    bbox = np.array(bbox)
+    
+    # Calculate the xmin, ymin, xmax, ymax
+    xmin = np.min(bbox[:, 0])
+    ymin = np.min(bbox[:, 1])
+    xmax = np.max(bbox[:, 0])
+    ymax = np.max(bbox[:, 1])
+    
+    return (xmin, ymin, xmax, ymax)
 
 with gr.Blocks() as demo:
     with gr.Row():  # Create a row for horizontal layout
