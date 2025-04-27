@@ -19,6 +19,10 @@ os.makedirs(folder_name, exist_ok=True)
 reader = easyocr.Reader(['ja'], gpu=False)
 mocr = MangaOcr()
 
+long_cluster_length = False
+def change_cluster_length(is_checked):
+    long_cluster_length = is_checked
+
 def new_filename():
     utc_now = datetime.datetime.utcnow()
     return f'image_{utc_now.strftime("%Y%m%d_%H%M%S")}.png'
@@ -100,8 +104,11 @@ def merge_bounding_boxes(bboxes, draw = None):
     bboxes = [convert_to_minmax_box(bbox) for bbox in bboxes]
 
     centers = [(xmin + (xmax - xmin)/2, ymin + (ymax - ymin)/2) for (xmin, ymin, xmax, ymax) in bboxes]
-    diagonals = [np.linalg.norm(np.array([xmax, ymax]) - np.array([xmin,ymin])) for (xmin, ymin, xmax, ymax) in bboxes]
-    # shortest_side = [np.min([xmax - xmin,ymax - ymin]) for (xmin, ymin, xmax, ymax) in bboxes] 
+    
+    if long_cluster_length:
+        diagonals = [np.linalg.norm(np.array([xmax, ymax]) - np.array([xmin,ymin])) for (xmin, ymin, xmax, ymax) in bboxes]
+    else:
+        shortest_side = [np.min([xmax - xmin,ymax - ymin]) for (xmin, ymin, xmax, ymax) in bboxes] 
 
     bbox_tree = KDTree(centers)
     # we will iterate through each bounding box and group them together
@@ -110,9 +117,13 @@ def merge_bounding_boxes(bboxes, draw = None):
     bbox_groups = list(range(len(bboxes))) # the value will be the group, index will be identifying bbox
 
     for i in range(len(bboxes)):
-        center = centers[i]
-        radius = diagonals[i]
-        # radius = 2*shortest_side[i]
+        center = centers[i]      
+        
+        if long_cluster_length:
+            radius = diagonals[i]
+        else:
+            radius = 2*shortest_side[i]
+            
         bbox_near_indices = bbox_tree.query_ball_point(center, radius)
         for b in bbox_near_indices:
             if b == i:
@@ -210,11 +221,13 @@ with gr.Blocks() as demo:
     with gr.Row():
         submit_button = gr.Button("Submit")
         progress_count = gr.Textbox('0%', label="Progress")
+        checkbox = gr.Checkbox(label="Use longer clustering length", value=long_cluster_length)
     with gr.Row():  # Create a row for horizontal layout
         input_files = gr.File(label="Upload Images", file_count="multiple", type="binary")
         intermediate_output = gr.Gallery(label="Processing Images")
         output_gallery = gr.Gallery(label="Processed Images")
 
     # Connect the function to the inputs and outputs
+    checkbox.change(change_cluster_length, inputs=checkbox, outputs=[])
     submit_button.click(translate_pages, inputs=input_files, outputs=[intermediate_output, output_gallery, progress_count])
 demo.launch(inbrowser=True)
