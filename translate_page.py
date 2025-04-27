@@ -85,6 +85,7 @@ def translate_manga(image):
         draw_intermediate.rectangle([min_x, min_y, max_x, max_y], outline="red", width=2)
 
     bboxes = [result[0] for result in results]
+    bboxes = [convert_to_minmax_box(bbox) for bbox in bboxes]
 
     new_bboxes = merge_bounding_boxes(bboxes, draw_intermediate)
 
@@ -111,8 +112,6 @@ def translate_manga(image):
 
 def merge_bounding_boxes(bboxes, draw = None):
     # use KDtree to store center points
-    bboxes = [convert_to_minmax_box(bbox) for bbox in bboxes]
-
     centers = [(xmin + (xmax - xmin)/2, ymin + (ymax - ymin)/2) for (xmin, ymin, xmax, ymax) in bboxes]
     
     if long_cluster_length:
@@ -213,18 +212,19 @@ def draw_multiline_inside_box(draw, bbox, text):
     # then we add a new line \n after the next word and space
     current_string = ''
     line_count = 1
+    text_width = 0
     for word in words:
+        current_width = draw.textlength(current_string, font=font)
         proposed_width = draw.textlength(current_string + f'{word} ', font=font)
         if proposed_width >= x2-x1:
             lined_text += current_string + '\n'
+            text_width = np.max([text_width, current_width])
             current_string = ''
             line_count += 1
         current_string += f'{word} '
     lined_text += current_string
-
-    text_width = draw.textlength(lined_text, font=font)
     
-    draw.rectangle([x1-b, y1-b, x1+text_width+b, y2+(line_count*font_size)+b], fill="white")
+    draw.rectangle([x1-b, y1-b, x1+text_width+b, y1+(line_count*font_size)+b], fill="white")
     draw.multiline_text((x1 + shadow_offset, y1 + shadow_offset), lined_text, font=font, fill="white")
     draw.multiline_text((x1,y1), lined_text, font=font, fill="black")
 
