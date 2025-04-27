@@ -23,28 +23,35 @@ def new_filename():
     utc_now = datetime.datetime.utcnow()
     return f'image_{utc_now.strftime("%Y%m%d_%H%M%S")}.png'
 
+def calculate_progress(count, total):
+    return f'{int(count/total)*100}%, {count} out of {total}'
+
 def translate_pages(image_list):
+    intermediate = []
     output = []
     total = len(image_list)
-    count = 0
+    count = 0    
     for image in image_list:
         bytesIO = io.BytesIO(image)
         img = Image.open(bytesIO)
         img = img.convert("RGB")
-        yield img, output
-        result_img = translate_manga(img)
+        yield intermediate, output, calculate_progress(count, total)
+        result_img, result_intermediate = translate_manga(img)
         result_img.save(f'{folder_name}/{new_filename()}')
         output.append(result_img)
-        yield result_img, output
+        intermediate.append(result_intermediate)
         count += 1
-        print(f'----- {count} out of {total} -----')
+        yield intermediate, output, calculate_progress(count, total)
+        print(f'----- {calculate_progress(count, total)} -----')
 
 def translate_manga(image):
     img = image
     # img = Image.fromarray(image).convert("RGB")
     img = ImageEnhance.Contrast(img).enhance(2.0)
     img = ImageEnhance.Sharpness(img).enhance(2.0)
+    img_copy = img.copy()
     draw = ImageDraw.Draw(img)
+    draw_intermediate = ImageDraw.Draw(img_copy)
 
     # process image and use it to pull text
     img_np = np.array(img)
@@ -71,14 +78,11 @@ def translate_manga(image):
         min_x, min_y = int(min(xs)), int(min(ys))
         max_x, max_y = int(max(xs)), int(max(ys))
 
-        # draw.rectangle([min_x, min_y, max_x, max_y], outline="red", width=2)
+        draw_intermediate.rectangle([min_x, min_y, max_x, max_y], outline="red", width=2)
 
     bboxes = [result[0] for result in results]
 
-    new_bboxes = merge_bounding_boxes(bboxes)
-    # font = ImageFont.truetype("arial.ttf", 20)
-    # for (x1,y1,x2,y2) in new_bboxes:
-    #     draw.rectangle([x1, y1, x2, y2], outline="blue", width=2)
+    new_bboxes = merge_bounding_boxes(bboxes, draw_intermediate)
 
     # in the new bounding boxes, take a screenshot, use ocr and replace the text 
     for bbox in new_bboxes:
@@ -89,15 +93,15 @@ def translate_manga(image):
         print(translated)
         draw_multiline_inside_box(draw, bbox, translated)
 
-    return img
+    return img, img_copy
 
 def merge_bounding_boxes(bboxes, draw = None):
     # use KDtree to store center points
     bboxes = [convert_to_minmax_box(bbox) for bbox in bboxes]
 
     centers = [(xmin + (xmax - xmin)/2, ymin + (ymax - ymin)/2) for (xmin, ymin, xmax, ymax) in bboxes]
-    # diagonals = [np.linalg.norm(np.array([xmax, ymax]) - np.array([xmin,ymin])) for (xmin, ymin, xmax, ymax) in bboxes]
-    shortest_side = [np.min([xmax - xmin,ymax - ymin]) for (xmin, ymin, xmax, ymax) in bboxes] 
+    diagonals = [np.linalg.norm(np.array([xmax, ymax]) - np.array([xmin,ymin])) for (xmin, ymin, xmax, ymax) in bboxes]
+    # shortest_side = [np.min([xmax - xmin,ymax - ymin]) for (xmin, ymin, xmax, ymax) in bboxes] 
 
     bbox_tree = KDTree(centers)
     # we will iterate through each bounding box and group them together
@@ -107,8 +111,8 @@ def merge_bounding_boxes(bboxes, draw = None):
 
     for i in range(len(bboxes)):
         center = centers[i]
-        # radius = diagonals[i]
-        radius = 2*shortest_side[i]
+        radius = diagonals[i]
+        # radius = 2*shortest_side[i]
         bbox_near_indices = bbox_tree.query_ball_point(center, radius)
         for b in bbox_near_indices:
             if b == i:
@@ -143,6 +147,10 @@ def merge_bounding_boxes(bboxes, draw = None):
         for i in range(1, len(grouped_inds)):
             new_bbox = merge_two_bbox(new_bbox, bboxes[grouped_inds[i]])
         new_bboxes.append(new_bbox)
+
+    if draw != None:
+        for (x1,y1,x2,y2) in new_bboxes:
+            draw.rectangle([x1, y1, x2, y2], outline="blue", width=2)
         
     return new_bboxes
 
@@ -183,14 +191,16 @@ def draw_multiline_inside_box(draw, bbox, text):
     # to split the text, we add up the words until they break the width limit
     # then we add a new line \n after the next word and space
     current_string = ''
-    max_width = 0
+    max_width = x2-x1
     for word in words:
-        current_string += f'{word} '
         current_width = draw.textlength(current_string, font=font)
-        if current_width >= x2-x1:
-            lined_text += current_string + '\n' 
+        proposed_width = draw.textlength(current_string + f'{word} ', font=font)
+        if proposed_width >= x2-x1:
+            lined_text += current_string + '\n'
             max_width = np.max([max_width, current_width]) 
             current_string = ''
+        current_string += f'{word} '
+    lined_text += current_string
             
     draw.rectangle([x1-b, y1-b, x1+(max_width)+b, y2+b], fill="white")
     draw.multiline_text((x1 + shadow_offset, y1 + shadow_offset), lined_text, font=font, fill="white")
@@ -199,12 +209,12 @@ def draw_multiline_inside_box(draw, bbox, text):
 with gr.Blocks() as demo:
     with gr.Row():
         submit_button = gr.Button("Submit")
+        progress_count = gr.Textbox('0%', label="Progress")
     with gr.Row():  # Create a row for horizontal layout
         input_files = gr.File(label="Upload Images", file_count="multiple", type="binary")
-        intermediate_output = gr.Image(label="Current Image")
+        intermediate_output = gr.Gallery(label="Processing Images")
         output_gallery = gr.Gallery(label="Processed Images")
 
     # Connect the function to the inputs and outputs
-    submit_button.click(translate_pages, inputs=input_files, outputs=[intermediate_output, output_gallery])
-
+    submit_button.click(translate_pages, inputs=input_files, outputs=[intermediate_output, output_gallery, progress_count])
 demo.launch(inbrowser=True)
