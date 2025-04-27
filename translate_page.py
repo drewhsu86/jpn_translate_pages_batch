@@ -17,6 +17,7 @@ from scipy.spatial import KDTree
 folder_name = "output_images"
 os.makedirs(folder_name, exist_ok=True)
 reader = easyocr.Reader(['ja'], gpu=False)
+mocr = MangaOcr()
 
 def new_filename():
     utc_now = datetime.datetime.utcnow()
@@ -70,11 +71,23 @@ def translate_manga(image):
         min_x, min_y = int(min(xs)), int(min(ys))
         max_x, max_y = int(max(xs)), int(max(ys))
 
-        draw.rectangle([min_x, min_y, max_x, max_y], outline="red", width=2)
+        # draw.rectangle([min_x, min_y, max_x, max_y], outline="red", width=2)
 
     bboxes = [result[0] for result in results]
 
-    new_bboxes = merge_bounding_boxes(bboxes, draw)
+    new_bboxes = merge_bounding_boxes(bboxes)
+    # font = ImageFont.truetype("arial.ttf", 20)
+    # for (x1,y1,x2,y2) in new_bboxes:
+    #     draw.rectangle([x1, y1, x2, y2], outline="blue", width=2)
+
+    # in the new bounding boxes, take a screenshot, use ocr and replace the text 
+    for bbox in new_bboxes:
+        cropped = img_processed.crop(bbox)
+        text = mocr(cropped)
+        print(text)
+        translated = GoogleTranslator(source='ja', target='en').translate(text)
+        print(translated)
+        draw_multiline_inside_box(draw, bbox, translated)
 
     return img
 
@@ -109,8 +122,29 @@ def merge_bounding_boxes(bboxes, draw = None):
             print(f'Bbox {i} in group {bbox_groups[i]}')
             draw.text(np.array(centers[i]) + np.array((2,2)), f'{bbox_groups[i]}', fill="white", font=font)
             draw.text(centers[i], f'{bbox_groups[i]}', fill="blue", font=font)
-    
-    return bboxes
+
+    def merge_two_bbox(bbox1, bbox2):
+        (xmin1, ymin1, xmax1, ymax1) = bbox1
+        (xmin2, ymin2, xmax2, ymax2) = bbox2
+        return (np.min([xmin1,xmin2]), np.min([ymin1,ymin2]), np.max([xmax1,xmax2]), np.max([ymax1,ymax2]))
+
+    merged_bboxes_dict = {}
+
+    for i in range(len(bbox_groups)):
+        group = bbox_groups[i]
+        if group in merged_bboxes_dict:
+            merged_bboxes_dict[group].append(i)
+        else:
+            merged_bboxes_dict[group] = [i]
+
+    new_bboxes = []
+    for grouped_inds in merged_bboxes_dict.values():
+        new_bbox = bboxes[grouped_inds[0]]
+        for i in range(1, len(grouped_inds)):
+            new_bbox = merge_two_bbox(new_bbox, bboxes[grouped_inds[i]])
+        new_bboxes.append(new_bbox)
+        
+    return new_bboxes
 
 def convert_to_minmax_box(bbox):
     # bbox is expected to be in the format [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
@@ -124,13 +158,53 @@ def convert_to_minmax_box(bbox):
     
     return (xmin, ymin, xmax, ymax)
 
+def draw_multiline_inside_box(draw, bbox, text):
+    if not draw or not bbox or not text:
+        return
+    b = 2 # buffer
+    shadow_offset = 2
+    font_size = 20
+    font = ImageFont.truetype("arial.ttf", font_size)
+    # we use capital A as a reference for character size
+    # we want to preserve the width and let the height run
+    # if the estimated height is too large we'll scale the font down
+    char_width = draw.textlength('A', font=font)
+    approx_text_volume = char_width * font_size* len(text)
+    (x1, y1, x2, y2) = bbox
+    approx_box_volume = (x2-x1) * (y2-y1)
+    if approx_text_volume > approx_box_volume:
+        ratio = approx_box_volume / approx_text_volume 
+        font_size = int(ratio * 20)
+        font = ImageFont.truetype("arial.ttf", font_size)
+
+    # check how many characters should go on one line
+    lined_text = ''
+    words = text.split(' ')
+    # to split the text, we add up the words until they break the width limit
+    # then we add a new line \n after the next word and space
+    current_string = ''
+    max_width = 0
+    for word in words:
+        current_string += f'{word} '
+        current_width = draw.textlength(current_string, font=font)
+        if current_width >= x2-x1:
+            lined_text += current_string + '\n' 
+            max_width = np.max([max_width, current_width]) 
+            current_string = ''
+            
+    draw.rectangle([x1-b, y1-b, x1+(max_width)+b, y2+b], fill="white")
+    draw.multiline_text((x1 + shadow_offset, y1 + shadow_offset), lined_text, font=font, fill="white")
+    draw.multiline_text((x1,y1), lined_text, font=font, fill="black")
+
 with gr.Blocks() as demo:
+    with gr.Row():
+        submit_button = gr.Button("Submit")
     with gr.Row():  # Create a row for horizontal layout
         input_files = gr.File(label="Upload Images", file_count="multiple", type="binary")
         intermediate_output = gr.Image(label="Current Image")
         output_gallery = gr.Gallery(label="Processed Images")
 
     # Connect the function to the inputs and outputs
-    input_files.change(translate_pages, inputs=input_files, outputs=[intermediate_output, output_gallery])
+    submit_button.click(translate_pages, inputs=input_files, outputs=[intermediate_output, output_gallery])
 
 demo.launch(inbrowser=True)
