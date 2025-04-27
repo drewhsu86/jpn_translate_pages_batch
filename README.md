@@ -1,1 +1,1 @@
-# jpn_translate_pages_batch
+# Readme
