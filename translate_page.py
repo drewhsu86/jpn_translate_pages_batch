@@ -23,9 +23,9 @@ long_cluster_length = False
 def change_cluster_length(is_checked):
     long_cluster_length = is_checked
 
-def new_filename():
+def new_filename(count=''):
     utc_now = datetime.datetime.utcnow()
-    return f'image_{utc_now.strftime("%Y%m%d_%H%M%S")}.png'
+    return f'image_{count}_{utc_now.strftime("%Y%m%d_%H%M%S")}.png'
 
 def calculate_progress(count, total):
     return f'{int(100*count/total)}%, {count} out of {total}'
@@ -41,10 +41,10 @@ def translate_pages(image_list):
         img = img.convert("RGB")
         yield intermediate, output, calculate_progress(count, total)
         result_img, result_intermediate = translate_manga(img)
-        result_img.save(f'{folder_name}/{new_filename()}')
+        count += 1
+        result_img.save(f'{folder_name}/{new_filename(count)}')
         output.append(result_img)
         intermediate.append(result_intermediate)
-        count += 1
         yield intermediate, output, calculate_progress(count, total)
         print(f'----- {calculate_progress(count, total)} -----')
 
